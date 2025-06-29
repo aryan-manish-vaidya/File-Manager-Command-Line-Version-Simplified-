@@ -2,422 +2,356 @@ import os
 import shutil
 import sys
 from datetime import datetime
-import tkinter as tk
-from tkinter import ttk, simpledialog, messagebox, scrolledtext
 
 
-class TextEditorWindow(tk.Toplevel):
-    """A Toplevel window that serves as a simple text editor."""
+def print_feedback(message, level="info"):
+    """
+    Provides formatted feedback to the user.
+    Levels: 'info' (blue), 'success' (green), 'error' (red), 'warning' (yellow).
+    """
+    colors = {
+        "info": "\033[94m",  # Blue
+        "success": "\033[92m",  # Green
+        "error": "\033[91m",  # Red
+        "warning": "\033[93m",  # Yellow
+        "endc": "\033[0m",  # End color
+    }
+    # On Windows, color codes don't work by default in cmd.exe
+    if sys.platform == "win32":
+        os.system('color')  # Enables color support on Windows
+    color = colors.get(level, colors["info"])
+    print(f"{color}[*] {message}{colors['endc']}")
 
-    def __init__(self, master, file_path):
-        super().__init__(master)
-        self.file_path = file_path
-        self.title(f"Editor - {os.path.basename(file_path)}")
-        self.geometry("700x500")
 
-        self.text_area = scrolledtext.ScrolledText(self, wrap=tk.WORD, undo=True)
-        self.text_area.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+def get_human_readable_size(size_bytes):
+    """Converts a size in bytes to a human-readable format (KB, MB, GB)."""
+    if size_bytes == 0:
+        return "0B"
+    size_name = ("B", "KB", "MB", "GB", "TB")
+    i = min(len(size_name) - 1, int(size_bytes.bit_length() / 10))
+    p = 1024 ** i
+    s = round(size_bytes / p, 2)
+    return f"{s} {size_name[i]}"
 
-        button_frame = ttk.Frame(self)
-        button_frame.pack(fill=tk.X, padx=5, pady=(0, 5))
 
-        ttk.Button(button_frame, text="Save", command=self.save_content).pack(side=tk.RIGHT, padx=5)
-        ttk.Button(button_frame, text="Save & Close", command=self.save_and_close).pack(side=tk.RIGHT)
+def list_directory_contents(path="."):
+    """
+    Lists the contents of the specified directory with detailed information.
+    """
+    try:
+        abs_path = os.path.abspath(path)
+        print_feedback(f"Contents of '{abs_path}'", "info")
+        print("-" * 80)
+        print(f"{'Type':<10} {'Name':<40} {'Size':<15} {'Modified':<20}")
+        print("-" * 80)
 
-        self.load_content()
-        self.protocol("WM_DELETE_WINDOW", self.on_close)
+        items = os.listdir(path)
+        if not items:
+            print("Directory is empty.")
+        else:
+            for item in sorted(items, key=lambda x: x.lower()):
+                item_path = os.path.join(path, item)
+                try:
+                    stat_info = os.stat(item_path)
+                    is_dir = os.path.isdir(item_path)
 
-    def load_content(self):
-        """Loads the file content into the text area."""
+                    item_type = "Folder" if is_dir else "File"
+                    item_name = item + "/" if is_dir else item
+                    size = get_human_readable_size(stat_info.st_size) if not is_dir else ""
+                    mod_time = datetime.fromtimestamp(stat_info.st_mtime).strftime('%Y-%m-%d %H:%M:%S')
+
+                    print(f"{item_type:<10} {item_name:<40} {size:<15} {mod_time:<20}")
+                except (FileNotFoundError, PermissionError):
+                    # Item might be a broken link or inaccessible, skip it
+                    print_feedback(f"Cannot access: {item_name}", "warning")
+                    continue
+        print("-" * 80)
+    except FileNotFoundError:
+        print_feedback(f"Directory not found: {path}", "error")
+    except PermissionError:
+        print_feedback(f"Permission denied to access: {path}", "error")
+
+
+def change_directory(new_path):
+    """Changes the current working directory."""
+    try:
+        os.chdir(new_path)
+        print_feedback(f"Current directory changed to: {os.getcwd()}", "success")
+    except FileNotFoundError:
+        print_feedback(f"Directory not found: {new_path}", "error")
+    except PermissionError:
+        print_feedback(f"Permission denied to access: {new_path}", "error")
+    except NotADirectoryError:
+        print_feedback(f"Not a directory: {new_path}", "error")
+
+
+def create_directory(name):
+    """Creates a new directory."""
+    try:
+        os.mkdir(name)
+        print_feedback(f"Directory '{name}' created successfully.", "success")
+    except FileExistsError:
+        print_feedback(f"Directory '{name}' already exists.", "error")
+    except PermissionError:
+        print_feedback("Permission denied to create directory here.", "error")
+
+
+def create_file(name):
+    """Creates a new empty file. Enforces file extension."""
+    # --- CHANGE: Enforce file extension ---
+    if not os.path.splitext(name)[1]:
+        print_feedback("File creation requires an extension (e.g., 'myfile.txt').", "error")
+        return
+
+    try:
+        with open(name, 'a'):
+            os.utime(name, None)
+        print_feedback(f"File '{name}' created successfully.", "success")
+    except PermissionError:
+        print_feedback("Permission denied to create file here.", "error")
+
+
+def read_file_contents(name):
+    """Reads and displays the content of a text file."""
+    try:
+        with open(name, 'r', encoding='utf-8', errors='ignore') as f:
+            print_feedback(f"Contents of '{name}':", "info")
+            print("-" * 80)
+            print(f.read())
+            print("-" * 80)
+    except FileNotFoundError:
+        print_feedback(f"File not found: {name}", "error")
+    except IsADirectoryError:
+        print_feedback(f"'{name}' is a directory, not a file.", "error")
+    except PermissionError:
+        print_feedback(f"Permission denied to read file: {name}", "error")
+
+
+def write_to_file(name, content):
+    """Writes content to a file, overwriting existing content. Enforces file extension."""
+    # --- CHANGE: Enforce file extension ---
+    if not os.path.splitext(name)[1]:
+        print_feedback("Writing to a file requires an extension (e.g., 'myfile.txt').", "error")
+        return
+
+    try:
+        with open(name, 'wb') as f:  # Open in binary write mode
+            f.write(content.encode('utf-8'))  # Encode string to bytes
+        print_feedback(f"Content written to '{name}'.", "success")
+    except IsADirectoryError:
+        print_feedback(f"Cannot write to a directory: '{name}'.", "error")
+    except PermissionError:
+        print_feedback(f"Permission denied to write to file: {name}", "error")
+
+
+def append_to_file(name, content):
+    """Appends content to a file. Enforces file extension."""
+    # --- CHANGE: Enforce file extension ---
+    if not os.path.splitext(name)[1]:
+        print_feedback("Appending to a file requires an extension (e.g., 'myfile.txt').", "error")
+        return
+
+    try:
+        with open(name, 'ab') as f:  # Open in binary append mode
+            f.write(content.encode('utf-8'))
+        print_feedback(f"Content appended to '{name}'.", "success")
+    except FileNotFoundError:
+        print_feedback(f"File not found: {name}", "error")
+    except IsADirectoryError:
+        print_feedback(f"Cannot write to a directory: '{name}'.", "error")
+    except PermissionError:
+        print_feedback(f"Permission denied to write to file: {name}", "error")
+
+
+def clear_file(name):
+    """Clears all content from a file, making it empty."""
+    try:
+        open(name, 'w').close()
+        print_feedback(f"File '{name}' has been cleared.", "success")
+    except FileNotFoundError:
+        print_feedback(f"File not found: {name}", "error")
+    except IsADirectoryError:
+        print_feedback(f"Cannot clear a directory: '{name}'.", "error")
+    except PermissionError:
+        print_feedback(f"Permission denied to modify file: {name}", "error")
+
+
+def remove_item(name):
+    """Removes a file or an empty directory."""
+    try:
+        if os.path.isfile(name):
+            os.remove(name)
+            print_feedback(f"File '{name}' removed successfully.", "success")
+        elif os.path.isdir(name):
+            if not os.listdir(name):  # Check if directory is empty
+                os.rmdir(name)
+                print_feedback(f"Empty directory '{name}' removed successfully.", "success")
+            else:
+                print_feedback(f"Directory '{name}' is not empty. Use 'rmtree' to delete it.", "warning")
+        else:
+            print_feedback(f"Item not found: {name}", "error")
+    except PermissionError:
+        print_feedback(f"Permission denied to remove: {name}", "error")
+
+
+def remove_directory_tree(name):
+    """Recursively removes a directory and all its contents. THIS IS DESTRUCTIVE."""
+    if not os.path.isdir(name):
+        print_feedback(f"'{name}' is not a directory.", "error")
+        return
+
+    confirm = input(
+        f"\033[91m[!] Are you sure you want to permanently delete '{name}' and all contents? (y/n): \033[0m").lower()
+    if confirm == 'y':
         try:
-            with open(self.file_path, 'r', encoding='utf-8') as f:
-                self.text_area.insert(tk.END, f.read())
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to read file: {e}", parent=self)
-            self.destroy()
-
-    def save_content(self):
-        """Saves the text area content back to the file."""
-        try:
-            content = self.text_area.get(1.0, tk.END)
-            with open(self.file_path, 'w', encoding='utf-8') as f:
-                f.write(content)
-            self.master.status_var.set(f"Saved '{os.path.basename(self.file_path)}'")
-            # Refresh the tree in the main app to show new size/date
-            self.master.populate_tree()
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to save file: {e}", parent=self)
-
-    def save_and_close(self):
-        self.save_content()
-        self.destroy()
-
-    def on_close(self):
-        # Check if there are unsaved changes
-        try:
-            current_content = self.text_area.get(1.0, tk.END)
-            with open(self.file_path, 'r', encoding='utf-8') as f:
-                saved_content = f.read()
-
-            if current_content.strip() != saved_content.strip():
-                if messagebox.askyesno("Unsaved Changes",
-                                       "You have unsaved changes. Do you want to save before closing?", parent=self):
-                    self.save_content()
-        except FileNotFoundError:
-            # File might be new or deleted, check if there is content in editor
-            if self.text_area.get(1.0, tk.END).strip():
-                if messagebox.askyesno("Unsaved Changes",
-                                       "You have unsaved changes. Do you want to save before closing?", parent=self):
-                    self.save_content()
-        except Exception:
-            pass  # Ignore other errors on close, just destroy window
-
-        self.destroy()
-
-
-class FileManagerApp(tk.Tk):
-    """The main application class for the GUI File Manager."""
-
-    def __init__(self):
-        super().__init__()
-        self.title("Python GUI File Manager")
-        self.geometry("900x600")
-
-        # --- State Variables ---
-        self.current_path = os.path.abspath(os.path.expanduser("~"))
-        self.clipboard = {"action": None, "path": None}  # For copy/paste
-
-        # --- UI Setup ---
-        self.create_widgets()
-        self.populate_tree()
-
-    def create_widgets(self):
-        """Creates and arranges all the widgets in the window."""
-
-        # --- Top Frame: Address Bar and Up Button ---
-        top_frame = ttk.Frame(self, padding=5)
-        top_frame.pack(fill=tk.X)
-
-        self.up_button = ttk.Button(top_frame, text="↑ Up", command=self.go_up)
-        self.up_button.pack(side=tk.LEFT, padx=(0, 5))
-
-        self.path_var = tk.StringVar(value=self.current_path)
-        self.path_entry = ttk.Entry(top_frame, textvariable=self.path_var, font=("Segoe UI", 10))
-        self.path_entry.pack(fill=tk.X, expand=True)
-        self.path_entry.bind("<Return>", self.navigate_from_address_bar)
-
-        # --- Main Frame: Treeview ---
-        main_pane = ttk.PanedWindow(self, orient=tk.VERTICAL)
-        main_pane.pack(fill=tk.BOTH, expand=True)
-
-        tree_container = ttk.Frame(main_pane, padding=5)
-        main_pane.add(tree_container)
-
-        columns = ("#1", "#2", "#3", "#4")
-        self.tree = ttk.Treeview(tree_container, columns=columns, show="headings")
-        self.tree.pack(fill=tk.BOTH, expand=True)
-
-        self.tree.heading("#1", text="Name")
-        self.tree.heading("#2", text="Date Modified")
-        self.tree.heading("#3", text="Type")
-        self.tree.heading("#4", text="Size")
-
-        self.tree.column("#1", width=300, stretch=tk.YES)
-        self.tree.column("#2", width=150, stretch=tk.YES)
-        self.tree.column("#3", width=100, stretch=tk.NO)
-        self.tree.column("#4", width=100, stretch=tk.NO, anchor=tk.E)
-
-        scrollbar = ttk.Scrollbar(self.tree, orient=tk.VERTICAL, command=self.tree.yview)
-        self.tree.configure(yscrollcommand=scrollbar.set)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-
-        self.tree.bind("<Double-1>", self.on_item_double_click)
-        self.tree.bind("<Button-3>", self.show_context_menu)
-
-        # --- Status Bar ---
-        self.status_var = tk.StringVar(value=f"Current Path: {self.current_path}")
-        status_bar = ttk.Label(self, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W, padding=2)
-        status_bar.pack(side=tk.BOTTOM, fill=tk.X)
-
-        # --- Context Menu ---
-        self.context_menu = tk.Menu(self, tearoff=0)
-        self.context_menu.add_command(label="Open", command=self.open_item, font=("Segoe UI", 9, "bold"))
-        self.context_menu.add_command(label="Edit", command=self.edit_item)
-        self.context_menu.add_command(label="Rename", command=self.rename_item)
-        self.context_menu.add_separator()
-        self.context_menu.add_command(label="Copy", command=self.copy_item)
-        self.context_menu.add_command(label="Cut", command=self.cut_item)
-        self.context_menu.add_command(label="Paste", command=self.paste_item, state=tk.DISABLED)
-        self.context_menu.add_separator()
-        self.context_menu.add_command(label="Clear Content", command=self.clear_content)
-        self.context_menu.add_command(label="Delete", command=self.delete_item)
-
-        self.empty_space_menu = tk.Menu(self, tearoff=0)
-        self.empty_space_menu.add_command(label="New Folder", command=self.create_folder)
-        self.empty_space_menu.add_command(label="New File", command=self.create_file)
-        self.empty_space_menu.add_command(label="Paste", command=self.paste_item, state=tk.DISABLED)
-
-    # --- Tree Population and Navigation ---
-
-    def populate_tree(self):
-        for i in self.tree.get_children():
-            self.tree.delete(i)
-
-        try:
-            items = os.listdir(self.current_path)
-            folders = sorted([i for i in items if os.path.isdir(os.path.join(self.current_path, i))], key=str.lower)
-            files = sorted([i for i in items if os.path.isfile(os.path.join(self.current_path, i))], key=str.lower)
-
-            for item_name in folders + files:
-                self.insert_item(item_name)
-
-            self.path_var.set(self.current_path)
-            self.status_var.set(f"Loaded {len(items)} items.")
+            shutil.rmtree(name)
+            print_feedback(f"Directory tree '{name}' removed successfully.", "success")
         except PermissionError:
-            messagebox.showerror("Permission Denied", f"Cannot access '{self.current_path}'.")
-            self.go_up()
-        except FileNotFoundError:
-            messagebox.showerror("Not Found", f"The path '{self.current_path}' does not exist.")
-            self.current_path = os.path.expanduser("~")
-            self.populate_tree()
+            print_feedback(f"Permission denied to remove: {name}", "error")
+    else:
+        print_feedback("Deletion cancelled.", "info")
 
-    def insert_item(self, item_name):
-        item_path = os.path.join(self.current_path, item_name)
-        try:
-            stat_info = os.stat(item_path)
-            mod_time = datetime.fromtimestamp(stat_info.st_mtime).strftime('%Y-%m-%d %H:%M')
 
-            if os.path.isdir(item_path):
-                self.tree.insert("", "end", values=(item_name, mod_time, "Folder", ""), tags=('folder',))
-            else:
-                ext = os.path.splitext(item_name)[1].lower()
-                item_type = f"{ext.upper()} File" if ext else "File"
-                size = self.get_human_readable_size(stat_info.st_size)
-                # Tag text files for specific actions
-                tag = 'textfile' if ext in ['.txt', '.py', '.json', '.xml', '.html', '.css', '.js', '.md'] else 'file'
-                self.tree.insert("", "end", values=(item_name, mod_time, item_type, size), tags=(tag,))
-        except (FileNotFoundError, PermissionError):
-            pass
-
-    def navigate_to_path(self, path):
-        if os.path.isdir(path):
-            self.current_path = os.path.abspath(path)
-            self.populate_tree()
+def copy_item(source, destination):
+    """Copies a file or directory."""
+    try:
+        if os.path.isfile(source):
+            shutil.copy2(source, destination)
+            print_feedback(f"File '{source}' copied to '{destination}'.", "success")
+        elif os.path.isdir(source):
+            shutil.copytree(source, destination)
+            print_feedback(f"Directory '{source}' copied to '{destination}'.", "success")
         else:
-            messagebox.showerror("Invalid Path", f"'{path}' is not a directory.")
+            print_feedback(f"Source item not found: {source}", "error")
+    except Exception as e:
+        print_feedback(f"An error occurred during copy: {e}", "error")
 
-    def navigate_from_address_bar(self, event=None):
-        self.navigate_to_path(self.path_var.get())
 
-    def go_up(self):
-        self.navigate_to_path(os.path.dirname(self.current_path))
+def move_item(source, destination):
+    """Moves/renames a file or directory."""
+    try:
+        shutil.move(source, destination)
+        print_feedback(f"Moved '{source}' to '{destination}'.", "success")
+    except Exception as e:
+        print_feedback(f"An error occurred during move: {e}", "error")
 
-    # --- Event Handlers ---
 
-    def on_item_double_click(self, event):
-        item_id = self.tree.selection()
-        if not item_id: return
-        self.open_item(item_id=item_id[0])
+def print_help():
+    """Prints the help menu."""
+    print_feedback("Python File Manager Help", "info")
+    commands = {
+        "ls": "List contents of the current directory.",
+        "cd <path>": "Change current directory. Use '..' to go up.",
+        "mkdir <name>": "Create a new directory.",
+        "touch <name.ext>": "Create a new empty file (extension required).",
+        "cat <name.ext>": "Display the contents of a file.",
+        "write <file.ext> \"content\"": "Write content to a file, overwriting it (extension required).",
+        "append <file.ext> \"content\"": "Append content to a file (extension required).",
+        "clear <file.ext>": "Clear all content from a file.",
+        "rm <name.ext>": "Remove a file or an EMPTY directory.",
+        "rmtree <name>": "DANGEROUS: Recursively delete a directory.",
+        "cp <src> <dest>": "Copy a file or directory.",
+        "mv <src> <dest>": "Move/Rename a file or directory.",
+        "help": "Show this help menu.",
+        "exit": "Exit the file manager.",
+    }
+    for cmd, desc in commands.items():
+        print(f"  \033[92m{cmd:<30}\033[0m{desc}")
 
-    def open_item(self, item_path=None, item_id=None):
-        if item_path is None:
-            if item_id is None:
-                selection = self.tree.selection()
-                if not selection: return
-                item_id = selection[0]
-            item_name = self.tree.item(item_id, "values")[0]
-            item_path = os.path.join(self.current_path, item_name)
 
-        if os.path.isdir(item_path):
-            self.navigate_to_path(item_path)
-        else:  # Is a file
-            item_tags = self.tree.item(item_id, "tags")
-            if 'textfile' in item_tags:
-                self.edit_item(item_path)  # Open text files in internal editor
-            else:
-                self.open_with_default_app(item_path)
+def main():
+    """The main loop of the file manager."""
+    print_feedback("Welcome to the Python File Manager. Type 'help' for commands.", "success")
 
-    def open_with_default_app(self, item_path):
-        """Opens a file with the system's default application."""
+    try:
+        os.chdir(os.path.expanduser("~"))
+    except Exception:
+        pass
+
+    while True:
+        current_path = os.getcwd()
+        prompt_path = current_path.replace(os.path.expanduser("~"), "~")
         try:
-            if sys.platform == "win32":
-                os.startfile(item_path)
-            elif sys.platform == "darwin":
-                os.system(f'open "{item_path}"')
-            else:
-                os.system(f'xdg-open "{item_path}"')
-            self.status_var.set(f"Opened '{os.path.basename(item_path)}'.")
-        except Exception as e:
-            messagebox.showerror("Error", f"Could not open the file: {e}")
+            command_input = input(f"\n\033[1;34m{prompt_path}\033[0m \033[1;32m$ \033[0m").strip()
+        except (KeyboardInterrupt, EOFError):
+            print("\nExiting.")
+            break
 
-    # --- Context Menu Actions ---
+        if not command_input:
+            continue
 
-    def show_context_menu(self, event):
-        selection_id = self.tree.identify_row(event.y)
-        if selection_id:
-            self.tree.selection_set(selection_id)
-            item_tags = self.tree.item(selection_id, "tags")
-
-            # Disable/enable menu items based on selection type
-            if 'folder' in item_tags:
-                self.context_menu.entryconfig("Edit", state=tk.DISABLED)
-                self.context_menu.entryconfig("Clear Content", state=tk.DISABLED)
-            else:
-                self.context_menu.entryconfig("Edit", state=tk.NORMAL)
-                self.context_menu.entryconfig("Clear Content", state=tk.NORMAL)
-
-            self.context_menu.entryconfig("Paste", state=tk.NORMAL if self.clipboard["path"] else tk.DISABLED)
-            self.context_menu.post(event.x_root, event.y_root)
-        else:
-            self.empty_space_menu.entryconfig("Paste", state=tk.NORMAL if self.clipboard["path"] else tk.DISABLED)
-            self.empty_space_menu.post(event.x_root, event.y_root)
-
-    def get_selected_item_path(self):
-        selection = self.tree.selection()
-        if not selection: return None
-        item_name = self.tree.item(selection[0], "values")[0]
-        return os.path.join(self.current_path, item_name)
-
-    def edit_item(self, item_path=None):
-        if item_path is None:
-            item_path = self.get_selected_item_path()
-        if not item_path or os.path.isdir(item_path): return
-
-        TextEditorWindow(self, item_path)
-
-    def clear_content(self):
-        src_path = self.get_selected_item_path()
-        if not src_path or os.path.isdir(src_path): return
-
-        if messagebox.askyesno("Confirm Clear",
-                               f"Are you sure you want to clear all content from '{os.path.basename(src_path)}'? This cannot be undone."):
-            try:
-                open(src_path, 'w').close()
-                self.status_var.set(f"Cleared content of '{os.path.basename(src_path)}'.")
-                self.populate_tree()  # Refresh to show size change
-            except Exception as e:
-                messagebox.showerror("Error", f"Could not clear file: {e}")
-
-    def create_folder(self):
-        name = simpledialog.askstring("New Folder", "Enter folder name:")
-        if name:
-            try:
-                os.mkdir(os.path.join(self.current_path, name))
-                self.status_var.set(f"Folder '{name}' created.")
-                self.populate_tree()
-            except Exception as e:
-                messagebox.showerror("Error", f"Could not create folder: {e}")
-
-    def create_file(self):
-        name = simpledialog.askstring("New File", "Enter file name (e.g., file.txt):")
-        if name:
-            if not os.path.splitext(name)[1]:
-                messagebox.showwarning("Invalid Name", "Please provide a file extension.")
-                return
-            try:
-                open(os.path.join(self.current_path, name), 'a').close()
-                self.status_var.set(f"File '{name}' created.")
-                self.populate_tree()
-            except Exception as e:
-                messagebox.showerror("Error", f"Could not create file: {e}")
-
-    def rename_item(self):
-        src_path = self.get_selected_item_path()
-        if not src_path: return
-
-        old_name = os.path.basename(src_path)
-        new_name = simpledialog.askstring("Rename", "Enter new name:", initialvalue=old_name)
-
-        if new_name and new_name != old_name:
-            dest_path = os.path.join(self.current_path, new_name)
-            try:
-                shutil.move(src_path, dest_path)
-                self.populate_tree()
-            except Exception as e:
-                messagebox.showerror("Error", f"Could not rename: {e}")
-
-    def delete_item(self):
-        src_path = self.get_selected_item_path()
-        if not src_path: return
-
-        item_name = os.path.basename(src_path)
-        is_dir = os.path.isdir(src_path)
-
-        confirm_msg = f"Are you sure you want to permanently delete '{item_name}'?"
-        if is_dir:
-            try:
-                if os.listdir(src_path):
-                    confirm_msg += "\n\nWARNING: The folder is not empty!"
-            except Exception:
-                pass
-
-        if messagebox.askyesno("Confirm Deletion", confirm_msg):
-            try:
-                if is_dir:
-                    shutil.rmtree(src_path)
-                else:
-                    os.remove(src_path)
-                self.populate_tree()
-            except Exception as e:
-                messagebox.showerror("Error", f"Could not delete: {e}")
-
-    def copy_item(self):
-        src_path = self.get_selected_item_path()
-        if src_path:
-            self.clipboard = {"action": "copy", "path": src_path}
-            self.status_var.set(f"Copied '{os.path.basename(src_path)}'.")
-
-    def cut_item(self):
-        src_path = self.get_selected_item_path()
-        if src_path:
-            self.clipboard = {"action": "cut", "path": src_path}
-            self.status_var.set(f"Cut '{os.path.basename(src_path)}'.")
-
-    def paste_item(self):
-        if not self.clipboard["path"]: return
-
-        src_path = self.clipboard["path"]
-        action = self.clipboard["action"]
-        dest_path = os.path.join(self.current_path, os.path.basename(src_path))
-
-        if src_path == self.current_path or os.path.abspath(src_path) == os.path.abspath(dest_path):
-            self.status_var.set("Cannot paste item into itself.")
-            return
+        parts = command_input.split()
+        command = parts[0].lower()
+        args = parts[1:]
 
         try:
-            if action == "copy":
-                if os.path.isdir(src_path):
-                    shutil.copytree(src_path, dest_path)
+            if command == "exit":
+                print_feedback("Goodbye!", "info")
+                break
+            elif command == "help":
+                print_help()
+            elif command == "ls":
+                list_directory_contents("." if not args else args[0])
+            elif command == "cd":
+                change_directory(args[0] if args else os.path.expanduser("~"))
+            elif command == "mkdir":
+                if args:
+                    create_directory(args[0])
                 else:
-                    shutil.copy2(src_path, dest_path)
-            elif action == "cut":
-                shutil.move(src_path, dest_path)
-                self.clipboard = {"action": None, "path": None}  # Clear clipboard
+                    print_feedback("Usage: mkdir <directory_name>", "warning")
+            elif command == "touch":
+                if args:
+                    create_file(args[0])
+                else:
+                    print_feedback("Usage: touch <file_name.ext>", "warning")
+            elif command == "cat":
+                if args:
+                    read_file_contents(args[0])
+                else:
+                    print_feedback("Usage: cat <file_name.ext>", "warning")
+            elif command == "write":
+                if len(args) >= 2:
+                    content_to_write = " ".join(args[1:]).strip('"\'')
+                    write_to_file(args[0], content_to_write)
+                else:
+                    print_feedback("Usage: write <file.ext> \"content to write\"", "warning")
+            elif command == "append":
+                if len(args) >= 2:
+                    content_to_append = " ".join(args[1:]).strip('"\'')
+                    append_to_file(args[0], content_to_append)
+                else:
+                    print_feedback("Usage: append <file.ext> \"content to append\"", "warning")
+            elif command == "clear":
+                if args:
+                    clear_file(args[0])
+                else:
+                    print_feedback("Usage: clear <file.ext>", "warning")
+            elif command == "rm":
+                if args:
+                    remove_item(args[0])
+                else:
+                    print_feedback("Usage: rm <item_name>", "warning")
+            elif command == "rmtree":
+                if args:
+                    remove_directory_tree(args[0])
+                else:
+                    print_feedback("Usage: rmtree <directory_name>", "warning")
+            elif command == "cp":
+                if len(args) == 2:
+                    copy_item(args[0], args[1])
+                else:
+                    print_feedback("Usage: cp <source> <destination>", "warning")
+            elif command == "mv":
+                if len(args) == 2:
+                    move_item(args[0], args[1])
+                else:
+                    print_feedback("Usage: mv <source> <destination>", "warning")
+            else:
+                print_feedback(f"Unknown command: '{command}'. Type 'help'.", "error")
 
-            self.populate_tree()
-        except FileExistsError:
-            if messagebox.askyesno("Confirm Replace", f"'{os.path.basename(dest_path)}' already exists. Replace it?"):
-                if os.path.isdir(dest_path):
-                    shutil.rmtree(dest_path)
-                else:
-                    os.remove(dest_path)
-                self.paste_item()
         except Exception as e:
-            messagebox.showerror("Error", f"Could not paste: {e}")
-
-    # --- Utility Methods ---
-
-    @staticmethod
-    def get_human_readable_size(size_bytes):
-        if size_bytes == 0: return "0 B"
-        size_name = ("B", "KB", "MB", "GB", "TB")
-        i = min(len(size_name) - 1, int(size_bytes.bit_length() / 10))
-        p = 1024 ** i
-        s = round(size_bytes / p, 2)
-        return f"{s} {size_name[i]}"
+            print_feedback(f"An unexpected error occurred: {e}", "error")
 
 
 if __name__ == "__main__":
-    app = FileManagerApp()
-    app.mainloop()
-
+    main()
